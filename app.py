@@ -10,6 +10,8 @@ API en /api/state     → JSON con estado actual
 """
 
 import asyncio
+import csv
+import io
 import os
 import json
 from datetime import datetime
@@ -97,7 +99,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
 
     <div class="panel">
-      <h3>Historial de Trades</h3>
+      <h3 style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Historial de Trades</span>
+        <a href="/api/trades.csv" download style="font-size:11px;color:var(--blue);text-decoration:none;border:1px solid var(--blue);padding:3px 10px;border-radius:4px;">&#11015; CSV</a>
+      </h3>
       <div style="overflow-x:auto">
         <table class="trades">
           <thead>
@@ -112,7 +117,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
-  <footer>Hedge Sim v2 &mdash; Polymarket BTC/SOL Up/Down 5m &mdash; Simulacion</footer>
+  <footer>
+    Hedge Sim v2 &mdash; Polymarket BTC/SOL Up/Down 5m &mdash; Simulacion &nbsp;|&nbsp;
+    <a href="/api/trades.csv" download style="color:var(--blue);text-decoration:none;">&#11015; Descargar CSV</a>
+  </footer>
 
   <script>
     const INTERVAL = 5000;
@@ -277,12 +285,34 @@ async def handle_state(request):
     )
 
 
+# ── CSV export ────────────────────────────────────────────────────────────────
+
+async def handle_csv(request):
+    trades = hedge_sim.estado["trades"]
+    fields = ["ts", "tipo", "lado1_side", "lado1_usd", "lado1_precio",
+              "hedgeado", "lado2_side", "lado2_usd", "lado2_precio",
+              "exit_precio", "resolucion", "pnl", "capital", "outcome"]
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(trades)
+
+    filename = f"hedge_trades_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return web.Response(
+        text=buf.getvalue(),
+        content_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ── Servidor web ───────────────────────────────────────────────────────────────
 
 async def start_web():
     app = web.Application()
     app.router.add_get("/", handle_dashboard)
     app.router.add_get("/api/state", handle_state)
+    app.router.add_get("/api/trades.csv", handle_csv)
 
     runner = web.AppRunner(app)
     await runner.setup()
