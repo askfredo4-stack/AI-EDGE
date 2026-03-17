@@ -71,11 +71,10 @@ OBI_STRONG        = 0.20        # OBI "fuerte" — preferible para entrar
 
 # ENTRADA L1
 ENTRY_SECS_MIN     = 60         # no entra si quedan menos de 60s
-ENTRY_SECS_MAX     = 280        # no entra si quedan más de 280s (inicio muy temprano)
 PRECIO_L1_MIN      = 0.30       # precio mínimo absoluto para entrar
 PRECIO_L1_MAX_LATE = 0.52       # precio máximo cuando quedan ~60s (mercado ya decidido)
-PRECIO_L1_MAX_EARLY= 0.65       # precio máximo cuando quedan ~240s (más tiempo, más rango)
-# La banda máxima se interpola linealmente entre estos dos extremos
+PRECIO_L1_MAX_EARLY= 0.65       # precio máximo cuando quedan ~240s+
+# La banda baja linealmente: con mucho tiempo acepta hasta 0.65, al final solo 0.52
 
 # HEDGE L2
 HEDGE_MOVE_MIN     = 0.05       # L1 debe subir 5c antes de hedgear
@@ -85,9 +84,11 @@ HEDGE_L2_MAX_EARLY = 0.45       # precio máximo L2 con mucho tiempo restante
 HEDGE_L2_MAX_LATE  = 0.35       # precio máximo L2 cuando queda poco tiempo
 
 # EARLY EXIT
-EARLY_EXIT_SECS      = 60       # sale si lleva 60s sin conseguir hedge
-EARLY_EXIT_OBI_FLIP  = -0.15    # OBI se invierte fuerte → salir
-EARLY_EXIT_PRICE_DROP= 0.08     # L1 cae 8c desde entrada → cortar pérdida
+EARLY_EXIT_SECS       = 60      # sale si lleva 60s sin conseguir hedge
+EARLY_EXIT_OBI_FLIP   = -0.15   # OBI se invierte fuerte → salir
+EARLY_EXIT_PRICE_DROP = 0.12    # L1 cae 12c — más alto para no confundir con el spread normal
+EARLY_EXIT_GRACE_SECS = 20      # segundos mínimos en posición antes de evaluar cualquier exit
+EARLY_EXIT_SECS_MIN   = 45      # salida forzada si quedan <45s sin hedge (diferente a ENTRY_SECS_MIN)
 
 # ─── CONTROL DE FRECUENCIA ────────────────────────────────────────────────────
 COOLDOWN_SECS        = 30       # espera mínima entre trades del mismo ciclo
@@ -104,12 +105,12 @@ RESOLVED_DN_THRESH   = 0.03
 def banda_entrada_max(secs_restantes: float) -> float:
     """
     Precio máximo permitido para L1 según cuánto tiempo queda.
-    - Con 240s restantes: hasta 0.65
-    - Con 60s restantes:  hasta 0.52
-    - Interpolación lineal entre esos extremos.
+    - Con >=240s restantes: hasta 0.65 (inicio del ciclo, mercado incierto)
+    - Con 60s restantes:    hasta 0.52 (mercado más decidido)
+    - Interpolación lineal. Sin límite por tiempo temprano — puede entrar en cualquier momento.
     """
-    secs = max(ENTRY_SECS_MIN, min(ENTRY_SECS_MAX, secs_restantes))
-    t = (secs - ENTRY_SECS_MIN) / (ENTRY_SECS_MAX - ENTRY_SECS_MIN)  # 0.0=tarde, 1.0=temprano
+    secs = max(ENTRY_SECS_MIN, min(240, secs_restantes))
+    t = (secs - ENTRY_SECS_MIN) / (240 - ENTRY_SECS_MIN)  # 0.0=tarde, 1.0=temprano
     return round(PRECIO_L1_MAX_LATE + t * (PRECIO_L1_MAX_EARLY - PRECIO_L1_MAX_LATE), 4)
 
 
@@ -127,8 +128,6 @@ def puede_entrar(ask: float, secs_restantes: float) -> tuple[bool, str]:
     """Verifica si el precio de entrada está dentro de la banda temporal."""
     if secs_restantes < ENTRY_SECS_MIN:
         return False, f"muy_tarde {secs_restantes:.0f}s < {ENTRY_SECS_MIN}s"
-    if secs_restantes > ENTRY_SECS_MAX:
-        return False, f"muy_temprano {secs_restantes:.0f}s > {ENTRY_SECS_MAX}s"
     if ask < PRECIO_L1_MIN:
         return False, f"precio_bajo {ask:.3f} < {PRECIO_L1_MIN}"
     max_ok = banda_entrada_max(secs_restantes)
@@ -469,23 +468,29 @@ def intentar_early_exit(up_m, dn_m, secs):
     secs_en_pos = time.time() - pos["ts_entrada"] if pos["ts_entrada"] else 0
     caida       = pos["lado1_precio"] - bid_lado1
 
+    # Grace period: no evaluar nada en los primeros segundos.
+    # Al entrar, ask=0.45 y bid=0.37 es spread normal — no es caída real.
+    if secs_en_pos < EARLY_EXIT_GRACE_SECS:
+        return
+
     razon = None
 
-    # Salida por tiempo en posición sin conseguir hedge
+    # Timeout: demasiado tiempo en posición sin conseguir hedge
     if secs_en_pos > EARLY_EXIT_SECS:
         razon = f"timeout {int(secs_en_pos)}s sin hedge"
 
-    # Salida si el mercado gira fuerte en contra
+    # Mercado gira fuerte en contra
     elif obi_lado1 < EARLY_EXIT_OBI_FLIP:
         razon = f"OBI invertido {obi_lado1:+.3f}"
 
-    # Salida si el precio cayó demasiado
+    # Precio cayó más allá del spread normal (0.12 > spread típico 0.06-0.08)
     elif caida > EARLY_EXIT_PRICE_DROP:
         razon = f"caida {caida*100:.1f}c desde entrada"
 
-    # Salida forzada si ya no queda tiempo y no hay hedge
-    elif secs is not None and secs < ENTRY_SECS_MIN:
-        razon = f"tiempo critico {int(secs)}s sin hedge — forzando salida"
+    # Tiempo crítico: quedan muy pocos segundos y no hay hedge — salir ya
+    # EARLY_EXIT_SECS_MIN (45s) < ENTRY_SECS_MIN (60s) para no entrar en conflicto
+    elif secs is not None and secs < EARLY_EXIT_SECS_MIN:
+        razon = f"tiempo critico {int(secs)}s sin hedge"
 
     if not razon:
         return
@@ -609,7 +614,7 @@ async def main_loop():
     log_ev(f"  Capital: ${CAPITAL_INICIAL:.0f} | {MAX_PCT_POR_LADO*100:.1f}%/lado = ${CAPITAL_INICIAL*MAX_PCT_POR_LADO:.2f}/orden")
     log_ev(f"  Banda entrada: precio [{PRECIO_L1_MIN:.2f}-{PRECIO_L1_MAX_EARLY:.2f}] encogiendo a [{PRECIO_L1_MIN:.2f}-{PRECIO_L1_MAX_LATE:.2f}]")
     log_ev(f"  Banda hedge:   L2 [{HEDGE_L2_MIN:.2f}-{HEDGE_L2_MAX_EARLY:.2f}] encogiendo a [{HEDGE_L2_MIN:.2f}-{HEDGE_L2_MAX_LATE:.2f}]")
-    log_ev(f"  Ventana de entrada: {ENTRY_SECS_MIN}s-{ENTRY_SECS_MAX}s antes del cierre")
+    log_ev(f"  Ventana de entrada: desde cualquier momento hasta {ENTRY_SECS_MIN}s antes del cierre")
     log_ev("=" * 70)
 
     restaurar_estado()
