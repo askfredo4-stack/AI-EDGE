@@ -64,8 +64,11 @@ ENTRY_WINDOW_MIN     = 60           # no entra en los ultimos 60s
 
 HEDGE_MOVE_MIN       = 0.05
 HEDGE_OBI_MIN        = -0.05
-TIMEOUT_SIN_HEDGE    = 45          # sale si quedan <45s y aun no hay hedge
 HEDGE_PRECIO_MAX     = 0.35
+
+EARLY_EXIT_SECS      = 60
+EARLY_EXIT_OBI_FLIP  = -0.15
+EARLY_EXIT_PRICE_DROP = 0.08
 
 RESOLVED_UP_THRESH   = 0.97
 RESOLVED_DN_THRESH   = 0.03
@@ -396,16 +399,29 @@ async def intentar_hedge(up_m, dn_m):
     guardar_estado()
 
 
-# ─── TIMEOUT EXIT (sin hedge) ─────────────────────────────────────────────────
+# ─── SALIDA ANTICIPADA ────────────────────────────────────────────────────────
 
-def intentar_timeout_exit(up_m, dn_m, secs):
+def intentar_early_exit(up_m, dn_m):
     if not pos["activa"] or pos["hedgeado"]:
-        return
-    if secs is None or secs > TIMEOUT_SIN_HEDGE:
         return
 
     lado1       = pos["lado1_side"]
     bid_lado1   = up_m["best_bid"] if lado1 == "UP" else dn_m["best_bid"]
+    obi_lado1   = up_m["obi"]      if lado1 == "UP" else dn_m["obi"]
+    secs_en_pos = time.time() - pos["ts_entrada"] if pos["ts_entrada"] else 0
+    caida       = pos["lado1_precio_avg"] - bid_lado1
+
+    razon = None
+    if secs_en_pos > EARLY_EXIT_SECS:
+        razon = f"timeout {int(secs_en_pos)}s sin hedge"
+    elif obi_lado1 < EARLY_EXIT_OBI_FLIP:
+        razon = f"OBI invertido {obi_lado1:+.3f}"
+    elif caida > EARLY_EXIT_PRICE_DROP:
+        razon = f"caida {caida*100:.1f}c desde entrada"
+
+    if not razon:
+        return
+
     exit_precio = max(bid_lado1, 0.01)
     pnl         = round(pos["lado1_shares"] * exit_precio - pos["lado1_usd"], 4)
 
@@ -418,8 +434,8 @@ def intentar_timeout_exit(up_m, dn_m, secs):
         estado["losses"] += 1
 
     actualizar_drawdown()
-    log_ev(f"TIMEOUT EXIT {lado1} @ bid={exit_precio:.4f} | {int(secs)}s restantes | PnL: ${pnl:+.4f} | cap=${estado['capital']:.2f}")
-    _registrar_trade("TIMEOUT_EXIT", exit_precio, None, "WIN" if pnl >= 0 else "LOSS", pnl)
+    log_ev(f"EARLY EXIT {lado1} @ bid={exit_precio:.4f} | razon: {razon} | PnL: ${pnl:+.4f} | cap=${estado['capital']:.2f}")
+    _registrar_trade("EARLY_EXIT", exit_precio, None, "WIN" if pnl >= 0 else "LOSS", pnl)
     resetear_pos()
     guardar_estado()
 
@@ -569,9 +585,9 @@ async def main_loop():
             if pos["activa"]:
                 verificar_resolucion(up_m, dn_m, secs)
 
-            # 5. Timeout exit si no hay hedge y quedan <45s
+            # 5. Early exit si no hay hedge
             if pos["activa"] and not pos["hedgeado"]:
-                intentar_timeout_exit(up_m, dn_m, secs)
+                intentar_early_exit(up_m, dn_m)
 
             # 6. Intentar hedge
             if pos["activa"] and not pos["hedgeado"]:
