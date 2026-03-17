@@ -18,7 +18,7 @@ CLOB_HOST   = "https://clob.polymarket.com"
 GAMMA_API   = "https://gamma-api.polymarket.com"
 SLOT_ORIGIN = 1771778100   # slot anchor compartido SOL y BTC (Feb 22 2026)
 SLOT_STEP   = 300          # 5 minutos
-TOP_LEVELS  = 15
+TOP_LEVELS  = 9999  # tomar todos los niveles disponibles del libro
 
 SYMBOL      = os.environ.get("SYMBOL", "SOL").upper()
 SLUG_PREFIX = "btc-updown-5m" if SYMBOL == "BTC" else "sol-updown-5m"
@@ -205,8 +205,9 @@ def get_order_book_metrics(token_id: str, top_n: int = TOP_LEVELS) -> tuple[dict
     except Exception as e:
         return None, str(e)
 
-    bids = sorted(ob.bids or [], key=lambda x: float(x.price), reverse=True)[:top_n]
-    asks = sorted(ob.asks or [], key=lambda x: float(x.price))[:top_n]
+    # Usar todos los niveles disponibles — más profundidad = OBI más estable y real
+    bids = sorted(ob.bids or [], key=lambda x: float(x.price), reverse=True)
+    asks = sorted(ob.asks or [], key=lambda x: float(x.price))
 
     bid_vol = sum(float(b.size) for b in bids)
     ask_vol = sum(float(a.size) for a in asks)
