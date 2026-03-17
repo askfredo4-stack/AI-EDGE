@@ -163,8 +163,8 @@ obi_history_up = deque(maxlen=OBI_WINDOW_SIZE)
 obi_history_dn = deque(maxlen=OBI_WINDOW_SIZE)
 
 # Control de frecuencia (se resetean al inicio de cada ciclo de mercado)
-ts_ultimo_trade    = 0.0   # timestamp del último cierre de posición
-trades_este_ciclo  = 0     # cuántas entradas hubo en el ciclo actual
+estado["ts_ultimo_trade"]   = 0.0   # timestamp del último cierre
+estado["trades_este_ciclo"] = 0     # entradas en el ciclo actual
 
 pos = {
     "activa":           False,
@@ -347,11 +347,11 @@ async def intentar_entrada(up_m, dn_m, secs):
         return
 
     # Control de frecuencia
-    secs_desde_ultimo = time.time() - ts_ultimo_trade
+    secs_desde_ultimo = time.time() - estado["ts_ultimo_trade"]
     if secs_desde_ultimo < COOLDOWN_SECS:
         log_ev(f"  COOLDOWN {int(COOLDOWN_SECS - secs_desde_ultimo)}s restantes")
         return
-    if trades_este_ciclo >= MAX_TRADES_POR_CICLO:
+    if estado["trades_este_ciclo"] >= MAX_TRADES_POR_CICLO:
         log_ev(f"  MAX_TRADES ({MAX_TRADES_POR_CICLO}) alcanzado este ciclo — esperando siguiente")
         return
 
@@ -397,8 +397,7 @@ async def intentar_entrada(up_m, dn_m, secs):
     pos["ts_entrada"]   = time.time()
     pos["secs_entrada"] = secs
 
-    global trades_este_ciclo
-    trades_este_ciclo += 1
+    estado["trades_este_ciclo"] += 1
 
     log_ev(
         f"ENTRADA LADO1 {lado} @ {precio:.4f} | {shares:.4f}sh | "
@@ -508,8 +507,7 @@ def intentar_early_exit(up_m, dn_m, secs):
         f"PnL: ${pnl:+.4f} | cap=${estado['capital']:.2f}"
     )
     _registrar_trade("EARLY_EXIT", exit_precio, None, "WIN" if pnl >= 0 else "LOSS", pnl)
-    global ts_ultimo_trade
-    ts_ultimo_trade = time.time()
+    estado["ts_ultimo_trade"] = time.time()
     resetear_pos()
     guardar_estado()
 
@@ -578,8 +576,7 @@ def _aplicar_resolucion(resuelto: str):
         1.0 if resuelto == pos["lado1_side"] else 0.0,
         resuelto, outcome, pnl_total,
     )
-    global ts_ultimo_trade
-    ts_ultimo_trade = time.time()
+    estado["ts_ultimo_trade"] = time.time()
     resetear_pos()
     guardar_estado()
 
@@ -628,8 +625,7 @@ async def main_loop():
                 log_ev(f"Buscando mercado {SYMBOL} Up/Down 5m...")
                 obi_history_up.clear()
                 obi_history_dn.clear()
-                global trades_este_ciclo
-                trades_este_ciclo = 0
+                estado["trades_este_ciclo"] = 0
                 mkt = await loop.run_in_executor(None, find_active_market, SYMBOL)
                 if mkt:
                     estado["ciclos"] += 1
