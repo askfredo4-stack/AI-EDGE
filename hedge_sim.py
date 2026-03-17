@@ -84,7 +84,7 @@ HEDGE_L2_MAX_EARLY = 0.45       # precio máximo L2 con mucho tiempo restante
 HEDGE_L2_MAX_LATE  = 0.35       # precio máximo L2 cuando queda poco tiempo
 
 # EARLY EXIT
-EARLY_EXIT_SECS       = 60      # sale si lleva 60s sin conseguir hedge
+EARLY_EXIT_SECS       = 90      # sale si lleva 90s sin conseguir hedge
 EARLY_EXIT_OBI_FLIP   = -0.15   # OBI se invierte fuerte → salir
 EARLY_EXIT_PRICE_DROP = 0.12    # L1 cae 12c — más alto para no confundir con el spread normal
 EARLY_EXIT_GRACE_SECS = 20      # segundos mínimos en posición antes de evaluar cualquier exit
