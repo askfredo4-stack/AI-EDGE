@@ -56,8 +56,8 @@ ORDEN_FRAGMENTOS     = 5
 ORDEN_DELAY_SECS     = 0.4
 
 SPREAD_MAX           = 0.12
-PRECIO_MIN_LADO1     = 0.25
-PRECIO_MAX_LADO1     = 0.75
+PRECIO_MIN_LADO1     = 0.40
+PRECIO_MAX_LADO1     = 0.60
 
 ENTRY_WINDOW_MAX     = 240          # no entra en los primeros 60s del ciclo
 ENTRY_WINDOW_MIN     = 60           # no entra en los ultimos 60s
